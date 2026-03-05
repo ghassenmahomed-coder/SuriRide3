@@ -55,7 +55,9 @@ export default function MapScreen({ user, profile, navigation }) {
         }
         try {
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=sr&limit=5`;
-            const resp = await fetch(url, { headers: { 'User-Agent': 'SuriRideApp' } });
+            // Browser stelt zelf User-Agent in, op mobiel voegen we hem toe
+            const headers = Platform.OS === 'web' ? { 'Accept': 'application/json' } : { 'User-Agent': 'SuriRideApp' };
+            const resp = await fetch(url, { headers });
             const data = await resp.json();
             setSuggestions(data.map(item => ({
                 display_name: item.display_name,
@@ -190,15 +192,18 @@ export default function MapScreen({ user, profile, navigation }) {
                     <View style={[styles.map, styles.webMapPlaceholder]}>
                         <Ionicons name="map" size={64} color={C.greenLight} style={{ opacity: 0.3 }} />
                         {routeInfo ? (
-                            <View style={{ alignItems: 'center' }}>
-                                <Text style={styles.webMapText}>Route berekend! ({routeInfo.distance} km)</Text>
-                                <Text style={styles.webMapSub}>Op mobiel zie je de volledige route op de kaart.</Text>
+                            <View style={{ alignItems: 'center', marginTop: 20 }}>
+                                <Text style={styles.webMapText}>Route berekend! ✅</Text>
+                                <Text style={styles.webMapSub}>{routeInfo.distance} km • {routeInfo.time} min</Text>
+                                <Text style={[styles.webMapSub, { fontStyle: 'italic', fontSize: 11 }]}>
+                                    De volledige route-lijn is zichtbaar in de mobiele app.
+                                </Text>
                             </View>
                         ) : (
-                            <>
-                                <Text style={styles.webMapText}>Interactieve web-kaart wordt geladen...</Text>
-                                <Text style={styles.webMapSub}>Op het web gebruiken we een vereenvoudigde weergave.</Text>
-                            </>
+                            <View style={{ alignItems: 'center' }}>
+                                <Text style={styles.webMapText}>Kaart is gereed</Text>
+                                <Text style={styles.webMapSub}>Zoek een adres en plan je route.</Text>
+                            </View>
                         )}
                     </View>
                 ) : (
@@ -293,6 +298,7 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: C.border,
         gap: 10,
+        zIndex: 100,
     },
     inputWrap: {
         flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -346,7 +352,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
         marginTop: 8,
     },
-    inputContainer: { zIndex: 10 },
+    inputContainer: { zIndex: 110 },
     suggestionsBox: {
         backgroundColor: C.dark3,
         borderRadius: 12,
