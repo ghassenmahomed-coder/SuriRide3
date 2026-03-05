@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "SuriRide",
+    "slug": "suriride",
+    "owner": "galayns-organization",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f1a0e"
+    },
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.suriride.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SuriRide gebruikt jouw locatie om taxi's in de buurt te vinden.",
+        "NSLocationAlwaysUsageDescription": "SuriRide chauffeurs hebben achtergrond locatie nodig om ritten te ontvangen."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f1a0e"
+      },
+      "package": "com.suriride.app",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
+    },
+    "web": {},
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "SuriRide heeft toegang nodig tot jouw locatie voor GPS tracking."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2d7a22"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1d630035-e8db-420a-b264-d934cdc7f1f9"
+      }
+    }
+  }
+}
