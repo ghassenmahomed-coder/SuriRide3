@@ -97,6 +97,10 @@ export default function LoginScreen({ navigation }) {
                         >
                             <Text style={styles.btnSecondaryText}>Nog geen account? Registreer hier</Text>
                         </TouchableOpacity>
+
+                        <Text style={{ color: C.textMuted, fontSize: 10, textAlign: 'center', marginTop: 10, opacity: 0.5 }}>
+                            v1.0.2+auto-deploy
+                        </Text>
                     </View>
                 </View>
             </ScrollView>
