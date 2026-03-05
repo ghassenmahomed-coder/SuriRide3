@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View, Text, TextInput, TouchableOpacity, StyleSheet,
-    SafeAreaView, Animated, Platform,
+    SafeAreaView, Animated, Platform, Keyboard,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,37 +27,89 @@ export default function MapScreen({ user, profile, navigation }) {
     const [myLocation, setMyLocation] = useState(null);
     const [from, setFrom] = useState('');
     const [to, setTo] = useState('');
-    const [routeInfo, setRouteInfo] = useState(null);
-    const mapRef = useRef(null);
+    const [fromSuggestions, setFromSuggestions] = useState([]);
+    const [toSuggestions, setToSuggestions] = useState([]);
+    const [fromCoords, setFromCoords] = useState(null);
+    const [toCoords, setToCoords] = useState(null);
+    const [routePolyline, setRoutePolyline] = useState([]);
 
     useEffect(() => {
         // Haal eigen locatie op
         getCurrentLocation()
-            .then(loc => setMyLocation(loc))
+            .then(loc => {
+                setMyLocation(loc);
+                setFromCoords({ lat: loc.lat, lng: loc.lng });
+            })
             .catch(() => { });
 
-        // Luister naar beschikbare chauffeurs
         const unsubDrivers = listenToAvailableDrivers(setDrivers);
-        // Luister naar live GPS locaties
         const unsubLocs = listenToAllDriverLocations(setLocations);
-
         return () => { unsubDrivers(); unsubLocs(); };
     }, []);
 
-    function planRoute() {
-        if (!from || !to) return;
-        // Mock route (echte routing vereist een routing API)
-        const mockStart = myLocation || { lat: 5.8664, lng: -55.1679 };
-        const mockEnd = { lat: 5.8430, lng: -55.1900 };
-        const dist = calculateDistance(mockStart.lat, mockStart.lng, mockEnd.lat, mockEnd.lng);
-        const minP = Math.min(...drivers.map(d => d.prijsKm || 10));
-        const maxP = Math.max(...drivers.map(d => d.prijsKm || 15));
-        setRouteInfo({
-            distance: dist.toFixed(1),
-            time: Math.round(dist / 30 * 60),
-            minPrice: (dist * minP).toFixed(0),
-            maxPrice: (dist * maxP).toFixed(0),
-        });
+    // Nominatim Autocomplete Zoekfunctie
+    async function searchAddress(query, setSuggestions) {
+        if (query.length < 3) {
+            setSuggestions([]);
+            return;
+        }
+        try {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=sr&limit=5`;
+            const resp = await fetch(url, { headers: { 'User-Agent': 'SuriRideApp' } });
+            const data = await resp.json();
+            setSuggestions(data.map(item => ({
+                display_name: item.display_name,
+                lat: parseFloat(item.lat),
+                lng: parseFloat(item.lon)
+            })));
+        } catch (e) {
+            console.error('Nominatim error:', e);
+        }
+    }
+
+    // OSRM Realistische Route Planner
+    async function planRoute() {
+        // Gebruik coördinaten van suggesties of fallback naar zoektermen/locatie
+        const start = fromCoords || (myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : { lat: 5.8664, lng: -55.1679 });
+        const end = toCoords;
+
+        if (!end) {
+            alert('Kies een bestemming uit de suggesties.');
+            return;
+        }
+
+        try {
+            const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+
+            if (data.routes && data.routes[0]) {
+                const route = data.routes[0];
+                const coords = route.geometry.coordinates.map(c => ({
+                    latitude: c[1],
+                    longitude: c[0]
+                }));
+
+                setRoutePolyline(coords);
+                setRouteInfo({
+                    distance: (route.distance / 1000).toFixed(1), // meters naar km
+                    time: Math.round(route.duration / 60), // seconden naar min
+                    minPrice: (route.distance / 1000 * 10).toFixed(0),
+                    maxPrice: (route.distance / 1000 * 15).toFixed(0),
+                });
+
+                // Zoom naar de route
+                if (mapRef.current && Platform.OS !== 'web') {
+                    mapRef.current.fitToCoordinates(coords, {
+                        edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                        animated: true,
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('OSRM error:', e);
+            alert('Kon route niet berekenen. Probeer het opnieuw.');
+        }
     }
 
     // Combineer driver info met live locatie
@@ -68,65 +120,126 @@ export default function MapScreen({ user, profile, navigation }) {
 
     return (
         <SafeAreaView style={styles.wrap}>
-            {/* Zoekbalk */}
             <View style={styles.searchBar}>
-                <View style={styles.inputWrap}>
-                    <Ionicons name="locate" size={16} color={C.greenLight} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Vertrekpunt..."
-                        placeholderTextColor={C.textMuted}
-                        value={from}
-                        onChangeText={setFrom}
-                    />
+                <View style={styles.inputContainer}>
+                    <View style={styles.inputWrap}>
+                        <Ionicons name="locate" size={16} color={C.greenLight} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Vertrekpunt..."
+                            placeholderTextColor={C.textMuted}
+                            value={from}
+                            onChangeText={(txt) => {
+                                setFrom(txt);
+                                searchAddress(txt, setFromSuggestions);
+                            }}
+                        />
+                    </View>
+                    {fromSuggestions.length > 0 && (
+                        <View style={styles.suggestionsBox}>
+                            {fromSuggestions.map((item, idx) => (
+                                <TouchableOpacity key={idx} style={styles.suggestionItem} onPress={() => {
+                                    setFrom(item.display_name);
+                                    setFromCoords({ lat: item.lat, lng: item.lng });
+                                    setFromSuggestions([]);
+                                }}>
+                                    <Text style={styles.suggestionText} numberOfLines={1}>{item.display_name}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
                 </View>
-                <View style={styles.inputWrap}>
-                    <Ionicons name="flag" size={16} color={C.gold} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Bestemming..."
-                        placeholderTextColor={C.textMuted}
-                        value={to}
-                        onChangeText={setTo}
-                    />
+
+                <View style={styles.inputContainer}>
+                    <View style={styles.inputWrap}>
+                        <Ionicons name="flag" size={16} color={C.gold} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Bestemming..."
+                            placeholderTextColor={C.textMuted}
+                            value={to}
+                            onChangeText={(txt) => {
+                                setTo(txt);
+                                searchAddress(txt, setToSuggestions);
+                            }}
+                        />
+                    </View>
+                    {toSuggestions.length > 0 && (
+                        <View style={styles.suggestionsBox}>
+                            {toSuggestions.map((item, idx) => (
+                                <TouchableOpacity key={idx} style={styles.suggestionItem} onPress={() => {
+                                    setTo(item.display_name);
+                                    setToCoords({ lat: item.lat, lng: item.lng });
+                                    setToSuggestions([]);
+                                }}>
+                                    <Text style={styles.suggestionText} numberOfLines={1}>{item.display_name}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
                 </View>
+
                 <TouchableOpacity style={styles.btnPlan} onPress={planRoute}>
-                    <Text style={styles.btnPlanText}>Route →</Text>
+                    <Text style={styles.btnPlanText}>Plan Route →</Text>
                 </TouchableOpacity>
             </View>
 
             {/* Kaart */}
-            {Platform.OS === 'web' ? (
-                <View style={[styles.map, styles.webMapPlaceholder]}>
-                    <Ionicons name="map" size={64} color={C.greenLight} style={{ opacity: 0.3 }} />
-                    <Text style={styles.webMapText}>Interactieve web-kaart wordt geladen...</Text>
-                    <Text style={styles.webMapSub}>Op het web gebruiken we een vereenvoudigde weergave.</Text>
-                </View>
-            ) : (
-                <MapView
-                    ref={mapRef}
-                    style={styles.map}
-                    provider={PROVIDER_GOOGLE}
-                    initialRegion={PARAMARIBO}
-                    customMapStyle={darkMapStyle}
-                    showsUserLocation
-                    showsMyLocationButton
-                >
-                    {/* Live taxi markers */}
-                    {driversWithLocation.map(driver => (
-                        <Marker
-                            key={driver.id}
-                            coordinate={{ latitude: driver.location.lat, longitude: driver.location.lng }}
-                            title={driver.naam}
-                            description={`${driver.autoNaam || 'Auto'} · SRD ${driver.prijsKm}/km · ⭐ ${driver.rating || 'Nieuw'}`}
-                        >
-                            <View style={styles.taxiMarker}>
-                                <Text style={styles.taxiMarkerEmoji}>🚕</Text>
+            {
+                Platform.OS === 'web' ? (
+                    <View style={[styles.map, styles.webMapPlaceholder]}>
+                        <Ionicons name="map" size={64} color={C.greenLight} style={{ opacity: 0.3 }} />
+                        {routeInfo ? (
+                            <View style={{ alignItems: 'center' }}>
+                                <Text style={styles.webMapText}>Route berekend! ({routeInfo.distance} km)</Text>
+                                <Text style={styles.webMapSub}>Op mobiel zie je de volledige route op de kaart.</Text>
                             </View>
-                        </Marker>
-                    ))}
-                </MapView>
-            )}
+                        ) : (
+                            <>
+                                <Text style={styles.webMapText}>Interactieve web-kaart wordt geladen...</Text>
+                                <Text style={styles.webMapSub}>Op het web gebruiken we een vereenvoudigde weergave.</Text>
+                            </>
+                        )}
+                    </View>
+                ) : (
+                    <MapView
+                        ref={mapRef}
+                        style={styles.map}
+                        provider={PROVIDER_GOOGLE}
+                        initialRegion={PARAMARIBO}
+                        customMapStyle={darkMapStyle}
+                        showsUserLocation
+                        showsMyLocationButton
+                    >
+                        {/* De werkelijke weg-route */}
+                        {routePolyline.length > 0 && (
+                            <Polyline
+                                coordinates={routePolyline}
+                                strokeColor={C.greenLight}
+                                strokeWidth={4}
+                            />
+                        )}
+
+                        {/* Start & Eind markers */}
+                        {fromCoords && <Marker coordinate={{ latitude: fromCoords.lat, longitude: fromCoords.lng }} title="Vertrek" />}
+                        {toCoords && <Marker coordinate={{ latitude: toCoords.lat, longitude: toCoords.lng }} title="Aankomst" pinColor={C.gold} />}
+
+                        {/* Live taxi markers */}
+                        {driversWithLocation.map(driver => (
+                            <Marker
+                                key={driver.id}
+                                coordinate={{ latitude: driver.location.lat, longitude: driver.location.lng }}
+                                title={driver.naam}
+                                description={`${driver.autoNaam || 'Auto'} · SRD ${driver.prijsKm}/km · ⭐ ${driver.rating || 'Nieuw'}`}
+                            >
+                                <View style={styles.taxiMarker}>
+                                    <Text style={styles.taxiMarkerEmoji}>🚕</Text>
+                                </View>
+                            </Marker>
+                        ))}
+                    </MapView>
+                )
+            }
 
             {/* Badge: aantal taxi's */}
             <View style={styles.countBadge}>
@@ -134,39 +247,41 @@ export default function MapScreen({ user, profile, navigation }) {
             </View>
 
             {/* Route resultaat */}
-            {routeInfo && (
-                <View style={styles.routeResult}>
-                    <Text style={styles.routeTitle}>📍 Route schatting</Text>
-                    <View style={styles.routeStats}>
-                        <View style={styles.routeStat}>
-                            <Text style={styles.routeStatVal}>{routeInfo.distance}</Text>
-                            <Text style={styles.routeStatLabel}>km</Text>
+            {
+                routeInfo && (
+                    <View style={styles.routeResult}>
+                        <Text style={styles.routeTitle}>📍 Route schatting</Text>
+                        <View style={styles.routeStats}>
+                            <View style={styles.routeStat}>
+                                <Text style={styles.routeStatVal}>{routeInfo.distance}</Text>
+                                <Text style={styles.routeStatLabel}>km</Text>
+                            </View>
+                            <View style={styles.routeStat}>
+                                <Text style={styles.routeStatVal}>{routeInfo.time}</Text>
+                                <Text style={styles.routeStatLabel}>min</Text>
+                            </View>
+                            <View style={styles.routeStat}>
+                                <Text style={[styles.routeStatVal, { color: C.gold }]}>
+                                    SRD {routeInfo.minPrice}–{routeInfo.maxPrice}
+                                </Text>
+                                <Text style={styles.routeStatLabel}>prijs</Text>
+                            </View>
                         </View>
-                        <View style={styles.routeStat}>
-                            <Text style={styles.routeStatVal}>{routeInfo.time}</Text>
-                            <Text style={styles.routeStatLabel}>min</Text>
-                        </View>
-                        <View style={styles.routeStat}>
-                            <Text style={[styles.routeStatVal, { color: C.gold }]}>
-                                SRD {routeInfo.minPrice}–{routeInfo.maxPrice}
-                            </Text>
-                            <Text style={styles.routeStatLabel}>prijs</Text>
-                        </View>
-                    </View>
 
-                    <TouchableOpacity
-                        style={styles.btnBookNow}
-                        onPress={() => navigation.navigate("Taxi's", {
-                            van: from || 'Mijn locatie',
-                            naar: to,
-                            afstand: parseFloat(routeInfo.distance)
-                        })}
-                    >
-                        <Text style={styles.btnBookNowText}>🚕 Zoek een taxi voor deze rit</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
-        </SafeAreaView>
+                        <TouchableOpacity
+                            style={styles.btnBookNow}
+                            onPress={() => navigation.navigate("Taxi's", {
+                                van: from || 'Mijn locatie',
+                                naar: to,
+                                afstand: parseFloat(routeInfo.distance)
+                            })}
+                        >
+                            <Text style={styles.btnBookNowText}>🚕 Zoek een taxi voor deze rit</Text>
+                        </TouchableOpacity>
+                    </View>
+                )
+            }
+        </SafeAreaView >
     );
 }
 
@@ -231,6 +346,22 @@ const styles = StyleSheet.create({
         fontSize: 14,
         marginTop: 8,
     },
+    inputContainer: { zIndex: 10 },
+    suggestionsBox: {
+        backgroundColor: C.dark3,
+        borderRadius: 12,
+        marginTop: 4,
+        borderWidth: 1,
+        borderColor: C.border,
+        maxHeight: 200,
+        overflow: 'hidden',
+    },
+    suggestionItem: {
+        padding: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(61,168,47,0.1)',
+    },
+    suggestionText: { color: C.text, fontSize: 13 },
 });
 
 // Google Maps donker thema
